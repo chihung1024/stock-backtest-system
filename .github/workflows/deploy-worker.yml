@@ -1,18 +1,24 @@
 name: Deploy Cloudflare Worker
 
-on: workflow_dispatch:                       # 每次 push 觸發
-    paths:
-      - "worker/**"           # 只有 worker 目錄變更才跑
-      - "wrangler.toml"
+# 只在「手動按下 Run workflow」時執行
+on:
+  workflow_dispatch:
+
+# 如果之後想同時支援 push 自動佈署，把下面註解解除
+#  push:
+#    paths:
+#      - "worker/**"
+#      - "worker/wrangler.toml"
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node (Wrangler 需要)
+      - name: Set up Node (Wrangler 需要)
         uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -22,6 +28,7 @@ jobs:
 
       - name: Publish Worker
         run: wrangler deploy
+        working-directory: worker          # 如果 wrangler.toml 在 worker/ 目錄
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
