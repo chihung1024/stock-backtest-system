@@ -1,1 +1,10 @@
-pages_build_output_dir = "public"
+# wrangler.toml  (根目錄)
+name = "stock-backtest-system"            # ★ 必填：Pages 專案名稱
+pages_build_output_dir = "."              # ★ 必填：讓 Pages 理解此檔
+
+main               = "worker/main.py"
+compatibility_date = "2025-07-18"
+compatibility_flags = ["python_workers"]
+
+[build]
+command = "pip install -r worker/requirements.txt -t .python_packages"
