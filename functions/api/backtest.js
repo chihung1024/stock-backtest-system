@@ -5,7 +5,7 @@
 // -------------------------------------------------------------
 
 // ① 先把下面子網域換成你真正 Worker 的 URL
-const WORKER_URL = 'https://backtest-worker.<你的帳號>.workers.dev/backtest';
+const WORKER_URL = 'https://backtest-worker.chired.workers.dev/backtest';
 
 export const onRequest = async ({ request }) => {
   // 將使用者的原始請求「複製」一份，目的地改成 Worker_URL
