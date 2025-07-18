@@ -1,59 +1,72 @@
-/* functions/_lib/portfolio.js
-   依初始金額 + 權重 + 再平衡週期，回傳每日期末「投組總值」陣列
-*/
-import { TRADING_DAYS_PER_YEAR } from './metrics.js';   // 直接複用常數
+// functions/_lib/portfolio.js
+// -------------------------------------------------------------
+// 依「初始金額 × 權重 × 再平衡週期」模擬投組，每日回傳淨值（總報酬價）
+// -------------------------------------------------------------
 
-export function simulatePortfolio(commonDates, priceMap, tickers, weightsPct,
-                                  initialAmount = 10000, rebalance = 'never') {
+export function simulatePortfolio(
+  commonDates,
+  priceMap,
+  tickers,
+  weightsPct,
+  initialAmount = 10000,
+  rebalance = 'never'           // 'never' | 'annually' | 'quarterly' | 'monthly'
+) {
+  // 1. 權重：若未給，預設等權
+  const n = tickers.length;
+  const weights = (weightsPct && weightsPct.length === n
+      ? weightsPct
+      : Array(n).fill(100 / n)
+    ).map(w => w / 100);
 
-  const w = weightsPct.length
-    ? weightsPct
-    : Array(tickers.length).fill(100 / tickers.length);          // 等權
-
-  // --- 1. 把百分比轉成 0~1 -------------------------------------------------
-  const weights = w.map(v => v / 100);
-
-  // --- 2. 預先取出各股票的價格序列 (與日期對齊) ----------------------------
+  // 2. 取出對齊後的價格序列
   const priceSeries = tickers.map(tk =>
-    commonDates.map(d => priceMap[tk].find(r => r.date === d).close)
+    commonDates.map(d => {
+      const row = priceMap[tk].find(r => r.date === d);
+      if (!row) throw new Error(`缺少 ${tk} 在 ${d} 的價格資料`);
+      return row.close;
+    })
   );
 
-  // --- 3. 計算第一次買進的「股數」 -----------------------------------------
+  // 3. 第一天按權重買進 → shares[]
   const shares = priceSeries.map((prices, i) =>
     (initialAmount * weights[i]) / prices[0]
   );
 
   const equity = [];
-  let nextRebalanceIdx = getNextRebalIdx(0, rebalance, commonDates);
+  let nextIdx = getNextRebalIdx(0, rebalance, commonDates);
 
+  // 4. 逐日累積 & 再平衡
   for (let day = 0; day < commonDates.length; day++) {
-    // 計算今日總值
     let val = 0;
-    for (let i = 0; i < shares.length; i++) val += shares[i] * priceSeries[i][day];
+    for (let i = 0; i < n; i++) val += shares[i] * priceSeries[i][day];
     equity.push(val);
 
-    // 到了再平衡日 → 依目前市值重新計算 shares
-    if (day === nextRebalanceIdx) {
-      for (let i = 0; i < shares.length; i++) {
+    if (day === nextIdx) {
+      for (let i = 0; i < n; i++) {
         shares[i] = (val * weights[i]) / priceSeries[i][day];
       }
-      nextRebalanceIdx = getNextRebalIdx(day, rebalance, commonDates);
+      nextIdx = getNextRebalIdx(day, rebalance, commonDates);
     }
   }
   return equity;
 }
 
-/* 根據週期 ('never' | 'annually' | 'quarterly' | 'monthly') 找下一個 rebalancing index */
+/* -------------------------------------------------------------
+   工具：依週期找下一次再平衡的索引
+------------------------------------------------------------- */
 function getNextRebalIdx(currentIdx, period, dates) {
   if (period === 'never') return Infinity;
   const cur = new Date(dates[currentIdx]);
   for (let i = currentIdx + 1; i < dates.length; i++) {
     const d = new Date(dates[i]);
-    if (period === 'annually'  && d.getFullYear() !== cur.getFullYear())  return i;
-    if (period === 'quarterly' && quarter(d) !== quarter(cur))            return i;
+    if (period === 'annually'  && d.getFullYear() !== cur.getFullYear())             return i;
+    if (period === 'quarterly' && quarter(d)      !== quarter(cur))                  return i;
     if (period === 'monthly'   && (d.getFullYear() !== cur.getFullYear() ||
-                                   d.getMonth()    !== cur.getMonth()))   return i;
+                                   d.getMonth()    !== cur.getMonth()))              return i;
   }
-  return Infinity;
+  return Infinity; // 之後不再平衡
 }
-function quarter(dt) { return Math.floor(dt.getMonth() / 3); }
+
+function quarter(dt) {
+  return Math.floor(dt.getMonth() / 3); // 0,1,2,3
+}
