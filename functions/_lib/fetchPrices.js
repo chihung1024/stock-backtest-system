@@ -1,69 +1,101 @@
 /* functions/_lib/fetchPrices.js
-   先嘗試 Stooq；若失敗或資料為空，改抓 Yahoo Finance。
-   兩者皆回傳格式：
-     [{ date: '2020-01-02', close: 300.12 }, ...]
+   1️⃣ 先抓 Stooq Close
+   2️⃣ 補抓 Yahoo Dividends / Splits → 把 Close 轉成「含股息總報酬價」
+   3️⃣ Stooq 失敗才整包改用 Yahoo Adj Close
+
+   回傳統一格式：
+     [{ date:'yyyy-mm-dd', close:123.45 }, …]
 */
-function parseStooqCSV(text) {
-  const lines = text.trim().split('\n');
-  lines.shift();                       // 去掉欄名
-  return lines
-    .map(l => {
-      const [date, , , , close] = l.split(',');
-      const v = parseFloat(close);
-      return isNaN(v) ? null : { date, close: v };
-    })
-    .filter(Boolean);
-}
 
-async function fetchFromStooq(ticker) {
-  const url = `https://stooq.com/q/d/l/?s=${ticker.toLowerCase()}.us&i=d`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error('stooq fetch error');
-  const rows = parseStooqCSV(await resp.text());
-  if (!rows.length) throw new Error('stooq empty');
-  return rows;
-}
-
-/* -------- Yahoo Finance 備援 -------- */
+//////////////////// 共用小工具 ////////////////////
 function toEpoch(dateStr) {
   return Math.floor(new Date(dateStr + 'T00:00:00Z').getTime() / 1000);
 }
-function parseYFCsv(text) {
-  const lines = text.trim().split('\n');
-  lines.shift();
-  return lines
-    .map(l => {
-      const [date,,,, close,, adj] = l.split(',');
-      const v = parseFloat(adj || close);
-      return isNaN(v) ? null : { date, close: v };
-    })
-    .filter(Boolean);
-}
-async function fetchFromYahoo(ticker, start, end) {
-  const p1 = toEpoch(start);
-  const p2 = toEpoch(end) + 86400;     // 讓結束日包含當天
-  const url = `https://query1.finance.yahoo.com/v7/finance/download/${ticker}` +
-              `?period1=${p1}&period2=${p2}` +
-              `&interval=1d&events=history&includeAdjustedClose=true`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error('yahoo fetch error');
-  const rows = parseYFCsv(await resp.text());
-  if (!rows.length) throw new Error('yahoo empty');
-  return rows;
+function csv(text) {
+  const [header, ...rows] = text.trim().split('\n');
+  return rows.map(r => r.split(','));
 }
 
-/* -------- 對外主函式 -------- */
+//////////////////// Stooq 價格 ////////////////////
+async function fetchStooq(tk) {
+  const url = `https://stooq.com/q/d/l/?s=${tk.toLowerCase()}.us&i=d`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('stooq fetch');
+  return csv(await res.text())
+    .map(([d,,,, c]) => ({ date: d, close: +c }))
+    .filter(r => !isNaN(r.close));
+}
+
+//////////////////// Yahoo 事件 ////////////////////
+async function fetchYahooEvents(tk, start, end, type) {
+  const p1 = toEpoch(start), p2 = toEpoch(end) + 86400;
+  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}` +
+              `?period1=${p1}&period2=${p2}&interval=1d&events=${type}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];                       // 無資料也算成功
+  return csv(await res.text()).map(r => ({
+    date: r[0],
+    value: +r[1]
+  }));
+}
+
+//////////////////// 把 Stooq Close → 含息總報酬 ////////////////////
+function applyEvents(rows, divs, splits) {
+  if (!rows.length) return rows;
+  let shares = 1;                               // 初始 1 股
+  let equity = rows[0].close;                   // 初始投資 = 1 股 * 首日價
+  const out = [{ date: rows[0].date, close: equity }];
+
+  const divMap   = new Map(divs.map(d => [d.date, d.value]));
+  const splitMap = new Map(splits.map(s => [s.date, s.value])); // value 形如 2/1
+
+  for (let i = 1; i < rows.length; i++) {
+    const { date, close } = rows[i];
+
+    // 若當天有拆分：shares *= (後 / 前)
+    if (splitMap.has(date)) {
+      const [num, den] = splitMap.get(date).split(':').map(Number);
+      shares *= num / den;
+    }
+
+    // 股息 ⇒ 新增 shares = 現金 / 收盤價
+    if (divMap.has(date)) shares += divMap.get(date) / close;
+
+    equity = shares * close;
+    out.push({ date, close: +equity.toFixed(6) });
+  }
+  return out;
+}
+
+//////////////////// Yahoo Adj Close 備援 ////////////////////
+async function fetchYahooAdj(tk, start, end) {
+  const p1 = toEpoch(start), p2 = toEpoch(end) + 86400;
+  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}` +
+              `?period1=${p1}&period2=${p2}` +
+              `&interval=1d&events=history&includeAdjustedClose=true`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('yahoo fetch');
+  return csv(await res.text())
+    .map(([d,,,, c,, a]) => ({ date: d, close: +(a || c) }))
+    .filter(r => !isNaN(r.close));
+}
+
+//////////////////// 對外主函式 ////////////////////
 export async function fetchPrices(tickers, start, end) {
   const out = {};
   for (const tk of tickers) {
     try {
-      // 1️⃣ 嘗試 Stooq
-      const rows = await fetchFromStooq(tk);
-      out[tk] = rows.filter(r => r.date >= start && r.date <= end);
+      const base  = await fetchStooq(tk);
+      const divs  = await fetchYahooEvents(tk, start, end, 'div');
+      const splits= await fetchYahooEvents(tk, start, end, 'split');
+      out[tk] = applyEvents(
+        base.filter(r => r.date >= start && r.date <= end),
+        divs,
+        splits
+      );
     } catch {
-      // 2️⃣ 失敗改用 Yahoo Finance
-      const rows = await fetchFromYahoo(tk, start, end);
-      out[tk] = rows;
+      // Stooq totally failed ⇒ Yahoo Adj Close
+      out[tk] = await fetchYahooAdj(tk, start, end);
     }
   }
   return out;
