@@ -2,7 +2,7 @@
    專門計算 CAGR、MDD、Volatility、Sharpe、Sortino、Beta、Alpha
    （Beta / Alpha 需要另外傳入 benchmarkReturns 才會算）
 */
-const TRADING_DAYS_PER_YEAR = 252;
+export const TRADING_DAYS_PER_YEAR = 252;
 const DAYS_PER_YEAR = 365.25;
 const EPSILON = 1e-9;
 
