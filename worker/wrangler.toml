@@ -1,14 +1,7 @@
-# wrangler.toml  ── 讓 Pages 在同一次 Build 內編譯 Python Worker
-name                = "backtest-worker"
-main                = "worker/main.py"
-compatibility_date  = "2025-07-18"
-
-# 開啟 Cloudflare Python Runtime
+name              = "backtest-worker"
+main              = "main.py"
+compatibility_date = "2025-07-18"
 compatibility_flags = ["python_workers"]
 
-# ***這一行一定要有*** ：告訴 Pages 「我用 wrangler.toml」
-pages_build_output_dir = "."
-
-# Build 階段自動安裝 yfinance / backtrader 等依賴
 [build]
-command = "pip install -r worker/requirements.txt -t .python_packages"
+command = "pip install -r requirements.txt -t ."
