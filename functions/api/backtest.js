@@ -63,23 +63,32 @@ export const onRequestPost = async ({ request }) => {
       });
     }
 
-    // ---------- Benchmark（可選） ----------
-    let benchmark = null;
-    if (p.benchmark) {
-      const benchSeries = priceMap[p.benchmark]
-        .filter(r => commonDates.includes(r.date))
-        .map(r => r.close);
+/* 5. benchmark (若有) --------------------------------------------------- */
+  let benchmark = null;
+  if (p.benchmark) {
+    // 用 portfolio 模擬器，起點同 initialAmount，週期固定 never
+    const benchEquity = simulatePortfolio(
+      commonDates,
+      priceMap,
+      [p.benchmark],   // 只放一支
+      [100],           // 100% 權重
+      initialAmount,
+      'never'
+    );
 
-      const metrics = calcMetrics(commonDates, benchSeries);
+  const metrics = calcMetrics(commonDates, benchEquity);
 
-      benchmark = {
-        name: p.benchmark,
-        ...metrics,
-        beta: 1.0,
-        alpha: 0.0,
-        portfolioHistory: commonDates.map((d, i) => ({ date: d, value: benchSeries[i] }))
-      };
-    }
+  benchmark = {
+    name: p.benchmark,
+    ...metrics,
+    beta: 1.0,
+    alpha: 0.0,
+    portfolioHistory: commonDates.map((d, i) => ({
+      date: d,
+      value: benchEquity[i]
+    }))
+  };
+}
 
     return json({ data: results, benchmark });
   } catch (err) {
