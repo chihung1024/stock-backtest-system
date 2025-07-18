@@ -1,7 +1,6 @@
 name: Deploy Cloudflare Worker
 
-on:
-  push:                       # 每次 push 觸發
+on: workflow_dispatch:                       # 每次 push 觸發
     paths:
       - "worker/**"           # 只有 worker 目錄變更才跑
       - "wrangler.toml"
