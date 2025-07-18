@@ -1,10 +1,10 @@
 name: Deploy Cloudflare Worker
 
-# 只在「手動按下 Run workflow」時執行
+# 手動按下 “Run workflow” 時才執行
 on:
   workflow_dispatch:
 
-# 如果之後想同時支援 push 自動佈署，把下面註解解除
+# 若之後想改成 push 自動部署，把下列區塊註解解除
 #  push:
 #    paths:
 #      - "worker/**"
@@ -15,20 +15,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node (Wrangler 需要)
+      # Cloudflare Wrangler 3.x 需要 Node 20+
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
-      - name: Install Wrangler
+      - name: Install Wrangler CLI
         run: npm install -g wrangler
 
-      - name: Publish Worker
+      - name: Deploy to Cloudflare Workers
+        working-directory: worker          # 這裡放 wrangler.toml 的資料夾
         run: wrangler deploy
-        working-directory: worker          # 如果 wrangler.toml 在 worker/ 目錄
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
