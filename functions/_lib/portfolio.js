@@ -1,7 +1,6 @@
 /* functions/_lib/portfolio.js
    依初始金額 + 權重 + 再平衡週期，回傳每日期末「投組總值」陣列
 */
-export { simulatePortfolio };          // 讓其他檔可直接 import
 import { TRADING_DAYS_PER_YEAR } from './metrics.js';   // 直接複用常數
 
 export function simulatePortfolio(commonDates, priceMap, tickers, weightsPct,
