@@ -1,56 +1,64 @@
 /* functions/_lib/fetchPrices.js
-   -------------------------------------------------------------
-   · 先抓 Yahoo Adjusted Close（含股息再投入）
-   · 若 Yahoo 回傳「完全空」或「全部收盤價 ≤ 0」→ 視為無效，再退回 Stooq
-   · Stooq 成功就用 Close（僅拆分調整，不含股息）
-   · 回傳格式統一：[{ date:'YYYY-MM-DD', close:123.45 }, ...]
+   1. 優先 Yahoo Adjusted Close
+      ‑ 把 "null" 視為缺值但 **不會濾掉整列**，用前一筆價 forward-fill
+      ‑ URL 先 encodeURIComponent()，確保 0050.TW、^TWII 等可下載
+   2. 如果整份 CSV 解析後還是 0 行 → 再退回 Stooq
 */
 
-//////////////////// 共用工具 ////////////////////
-const csv     = t => t.trim().split('\n').slice(1).map(l => l.split(','));
-const toEpoch = d => Math.floor(new Date(d + 'T00:00:00Z').getTime() / 1000);
+const toEpoch = d => Math.floor(new Date(d + "T00:00:00Z").getTime() / 1000);
+const csvRows = t => t.trim().split("\n").slice(1).map(l => l.split(","));  // skip header
 
-//////////////////// 1️⃣  Yahoo Finance (Adj Close) ////////////////////
-async function yahooAdj(tk, start, end) {
-  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}` +
-              `?period1=${toEpoch(start)}&period2=${toEpoch(end) + 86400}` +
-              `&interval=1d&events=history&includeAdjustedClose=true`;
+/* ---------- Yahoo (Adj Close) ---------- */
+async function yahooAdj(tk, from, to) {
+  const url =
+    `https://query1.finance.yahoo.com/v7/finance/download/` +
+    `${encodeURIComponent(tk)}` +                         // ① URL-encode
+    `?period1=${toEpoch(from)}&period2=${toEpoch(to) + 86400}` +
+    `&interval=1d&events=history&includeAdjustedClose=true`;
+
   const r = await fetch(url);
-  if (!r.ok) throw new Error('yahoo fetch');
+  if (!r.ok) throw new Error("yahoo fetch");
 
-  return csv(await r.text())
-    .map(([d,,,, c,, a]) => ({ date: d, close: +(a || c) }))
-    .filter(o => !isNaN(o.close));
+  const rows = csvRows(await r.text());
+  if (!rows.length) return [];
+
+  /* ② 把 null 先標記為 undefined，稍後 forward-fill */
+  const out = rows.map(([d,,,,close,,adj]) => {
+    let v = adj === "null" ? NaN : +adj;
+    if (!isFinite(v)) v = close === "null" ? NaN : +close;
+    return { date: d, close: v };
+  });
+
+  /* ③ forward-fill 第一筆之後的 NaN */
+  let last = null;
+  for (const r of out) {
+    if (isFinite(r.close)) last = r.close;
+    else if (last !== null) r.close = last;
+  }
+  return out.filter(r => isFinite(r.close));            // 最前面的 NaN 仍濾掉
 }
 
-//////////////////// 2️⃣  Stooq (Close) ////////////////////
-async function stooq(tk, start, end) {
+/* ---------- Stooq (備援) ---------- */
+async function stooq(tk, from, to) {
   const url = `https://stooq.com/q/d/l/?s=${tk.toLowerCase()}.us&i=d`;
   const r = await fetch(url);
-  if (!r.ok) throw new Error('stooq fetch');
+  if (!r.ok) throw new Error("stooq");
 
-  return csv(await r.text())
-    .map(([d,,,, c]) => ({ date: d, close: +c }))
-    .filter(o => !isNaN(o.close) && o.date >= start && o.date <= end);
+  return csvRows(await r.text())
+    .map(([d,,,,c]) => ({ date: d, close: +c }))
+    .filter(r => !isNaN(r.close) && r.date >= from && r.date <= to);
 }
 
-//////////////////// 對外主函式 ////////////////////
-export async function fetchPrices(tickers, start, end) {
+/* ---------- 對外主函式 ---------- */
+export async function fetchPrices(list, start, end) {
   const out = {};
-
-  for (const tk of tickers) {
+  for (const tk of list) {
     try {
-      // --- 優先嘗試 Yahoo ---
       const rows = await yahooAdj(tk, start, end);
-
-      // 若完全沒有有效價格 (空陣列 或 全部 ≤ 0) 視為失敗
-      const hasPositive = rows.some(r => r.close > 0);
-      if (!hasPositive) throw new Error('yahoo invalid');
-
-      out[tk] = rows;
+      if (rows.length) { out[tk] = rows; continue; }
+      throw "empty";
     } catch {
-      // --- 退回 Stooq ---
-      out[tk] = await stooq(tk, start, end);
+      out[tk] = await stooq(tk, start, end);             // 若仍抓不到就保持空陣列
     }
   }
   return out;
