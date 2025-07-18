@@ -1,0 +1,10 @@
+name            = "backtest-worker"
+main            = "worker/main.py"
+compatibility_date = "2025-07-18"
+
+# 開啟 Python runtime
+compatibility_flags = ["python_workers"]
+
+# 自動安裝 requirements.txt
+[build]
+command = "pip install -r worker/requirements.txt -t .python_packages"
