@@ -1,82 +1,67 @@
-/* functions/_lib/fetchPrices.js
-   1️⃣ 先抓 Stooq（已含拆分調整）
-   2️⃣ 再抓 Yahoo「Dividends」CSV，把現金股息轉成再投入股數
-   3️⃣ 若 Stooq 整檔失敗 → 改抓 Yahoo Adj Close 作為備援
+/* 先規則判斷：只要代碼含 “.” 而且不是 .US，就直接用 Yahoo
+   其餘 → Stooq，若筆數 <50 或拋錯，再退回 Yahoo */
+function isNonUsTicker(tk){ return /\./.test(tk) && !/\.US$/i.test(tk); }
 
-   回傳格式：[{ date:'yyyy-mm-dd', close:123.45 }, …] ＝「已含股息再投入」的總報酬價
-*/
+const csv = t => t.trim().split('\n').slice(1).map(l=>l.split(','));
+const toEpoch = d => Math.floor(new Date(d+'T00:00:00Z').getTime()/1000);
 
-/* ---------- 共用工具 ---------- */
-function toEpoch(d) { return Math.floor(new Date(d + 'T00:00:00Z').getTime() / 1000); }
-const parseCSV = txt => txt.trim().split('\n').slice(1).map(l => l.split(','));
-
-/* ---------- 下載 Stooq 收盤價 ---------- */
-async function fetchStooq(tk) {
-  const url = `https://stooq.com/q/d/l/?s=${tk.toLowerCase()}.us&i=d`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('stooq fetch');
-  return parseCSV(await res.text())
-    .map(([d,,,,c]) => ({ date:d, close:+c }))
-    .filter(r => !isNaN(r.close));
-}
-
-/* ---------- 下載 Yahoo 股息事件 ---------- */
-async function fetchYahooDivs(tk, start, end) {
-  const p1 = toEpoch(start), p2 = toEpoch(end) + 86400;
-  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}` +
-              `?period1=${p1}&period2=${p2}&interval=1d&events=div`;
-  const res = await fetch(url);
-  if (!res.ok) return [];                 // 沒配息也屬正常
-  return parseCSV(await res.text())
-    .map(([d,val]) => ({ date:d, cash:+val }))
-    .filter(r => !isNaN(r.cash));
-}
-
-/* ---------- 把 Stooq Close → 含息總報酬 ---------- */
-function applyDividends(rows, divs) {
-  if (!rows.length) return rows;
-  const divMap = new Map(divs.map(d => [d.date, d.cash]));
-  let shares = 1;                                   // 一開始 1 股
-  let equity = rows[0].close;                       // 初始權益
-  const out = [{ date: rows[0].date, close: equity }];
-
-  for (let i = 1; i < rows.length; i++) {
-    const { date, close } = rows[i];
-    if (divMap.has(date)) shares += divMap.get(date) / close;   // DRIP
-    equity = shares * close;
-    out.push({ date, close:+equity.toFixed(6) });
-  }
-  return out;
-}
-
-/* ---------- Yahoo Adj Close 備援 ---------- */
-async function fetchYahooAdj(tk, start, end) {
-  const p1 = toEpoch(start), p2 = toEpoch(end) + 86400;
-  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}` +
-              `?period1=${p1}&period2=${p2}` +
+/* ---------- Yahoo Adj Close ---------- */
+async function yahooAdj(tk,start,end){
+  const url = `https://query1.finance.yahoo.com/v7/finance/download/${tk}`+
+              `?period1=${toEpoch(start)}&period2=${toEpoch(end)+86400}`+
               `&interval=1d&events=history&includeAdjustedClose=true`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('yahoo adj fetch');
-  return parseCSV(await res.text())
-    .map(([d,,,,c,,a]) => ({ date:d, close:+(a||c) }))
-    .filter(r => !isNaN(r.close));
+  const r = await fetch(url); if(!r.ok) throw 0;
+  return csv(await r.text()).map(([d,,,,c,,a])=>({date:d,close:+(a||c)}))
+                           .filter(r=>!isNaN(r.close));
 }
 
-/* ---------- 對外主函式 ---------- */
-export async function fetchPrices(tickers, start, end) {
-  const out = {};
-  for (const tk of tickers) {
-    try {
-      // ① Stooq 收盤價 + Yahoo 股息
-      const base = await fetchStooq(tk);
-      const divs = await fetchYahooDivs(tk, start, end);
-      out[tk] = applyDividends(
-        base.filter(r => r.date >= start && r.date <= end),
-        divs
-      );
-    } catch {
-      // ② 完全失敗 → Yahoo Adj Close
-      out[tk] = await fetchYahooAdj(tk, start, end);
+/* ---------- Yahoo Div 現金 → 股息再投入 ---------- */
+async function yahooDiv(tk,start,end){
+  const url=`https://query1.finance.yahoo.com/v7/finance/download/${tk}`+
+            `?period1=${toEpoch(start)}&period2=${toEpoch(end)+86400}`+
+            `&interval=1d&events=div`;
+  const r=await fetch(url); if(!r.ok) return [];
+  return csv(await r.text()).map(([d,val])=>({date:d,cash:+val}))
+                            .filter(r=>!isNaN(r.cash));
+}
+
+/* ---------- Stooq Close (已含拆分) ---------- */
+async function stooq(tk){
+  const url=`https://stooq.com/q/d/l/?s=${tk.toLowerCase()}.us&i=d`;
+  const r=await fetch(url); if(!r.ok) throw 0;
+  return csv(await r.text()).map(([d,,,,c])=>({date:d,close:+c}))
+                            .filter(r=>!isNaN(r.close));
+}
+
+/* 把股息換股：shares += cash/close → equity=shares*close */
+function addDiv(rows,divs){
+  if(!rows.length) return rows;
+  const m=new Map(divs.map(d=>[d.date,d.cash]));
+  let sh=1, out=[{date:rows[0].date,close:rows[0].close}];
+  for(let i=1;i<rows.length;i++){
+    const {date,close}=rows[i];
+    if(m.has(date)) sh+=m.get(date)/close;
+    out.push({date,close:+(sh*close).toFixed(6)});
+  } return out;
+}
+
+/* ---------- 主匯出 ---------- */
+export async function fetchPrices(list,start,end){
+  const out={};
+  for(const tk of list){
+    try{
+      let rows;
+      if(isNonUsTicker(tk)){ // 直接 Yahoo
+        rows=await yahooAdj(tk,start,end);
+      }else{
+        rows=await stooq(tk);
+        if(rows.length<50) throw 0;           // 筆數過少 → 視同失敗
+        const divs=await yahooDiv(tk,start,end);
+        rows=addDiv(rows,divs);
+      }
+      out[tk]=rows.filter(r=>r.date>=start&&r.date<=end);
+    }catch{ // 完全失敗 → Yahoo Adj
+      out[tk]=await yahooAdj(tk,start,end);
     }
   }
   return out;
