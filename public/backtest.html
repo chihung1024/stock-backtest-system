@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>美股投資組合回測系統 (Vercel 部署版)</title>
+    <title>美股投資組合回測系統 (Cloudflare 前端版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+        // Cloudflare Pages 可在部署時覆蓋此值，例如指向 Vercel/Worker API 網域
+        window.__API_BASE_URL__ = window.__API_BASE_URL__ || '';
+    </script>
     <style>
         body { font-family: 'Inter', 'Noto Sans TC', sans-serif; }
         .info-icon { cursor: pointer; display: inline-block; margin-left: 4px; color: #9ca3af; position: relative; }
@@ -329,6 +333,11 @@
         function handleClearAllTickers() { assets.forEach(asset => { asset.ticker = ''; }); renderGrid(); }
         function displayError(container, message) { container.innerHTML = `<div class="error-message"><strong>錯誤：</strong> ${message}</div>`; }
 
+        function buildApiUrl(path) {
+            const baseUrl = (window.__API_BASE_URL__ || '').replace(/\/$/, '');
+            return baseUrl ? `${baseUrl}${path}` : path;
+        }
+
         // --- SCREENER LOGIC ---
         async function runScreener() {
             screenerErrorContainer.innerHTML = '';
@@ -343,7 +352,7 @@
             };
 
             try {
-                const response = await fetch('/api/screener', {
+                const response = await fetch(buildApiUrl('/api/screener'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -387,7 +396,7 @@
             if(errorContainer.innerHTML) return;
             resultsPanel.classList.remove('hidden'); resultsContent.classList.add('hidden'); loader.classList.remove('hidden');
             try {
-                const response = await fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const response = await fetch(buildApiUrl('/api/backtest'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || `HTTP 錯誤: ${response.status}`);
                 if (result.warning) { warningContainer.innerHTML = `<div class="warning-message" role="alert"><p class="font-bold">請注意</p><p>${result.warning}</p></div>`; }
@@ -485,7 +494,7 @@
             scanLoader.classList.remove('hidden');
 
             try {
-                const response = await fetch('/api/scan', {
+                const response = await fetch(buildApiUrl('/api/scan'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
