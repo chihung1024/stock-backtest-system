@@ -16,6 +16,8 @@ jobs:
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,4 +31,4 @@ jobs:
       - name: Lint maintained API and tests
         run: ruff check api/index.py tests/test_api.py
       - name: Test
-        run: pytest -q
+        run: python -m pytest -q tests/test_api.py
